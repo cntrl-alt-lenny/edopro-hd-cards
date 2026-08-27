@@ -306,7 +306,7 @@ jobs:
     - name: Release
       uses: softprops/action-gh-release@v3
       with:
-        name: EDOPro HD Sync v${{ needs.build.outputs.version }}
+        name: EDOPro HD Cards Downloader v${{ needs.build.outputs.version }}
         generate_release_notes: true
         fail_on_unmatched_files: true
         files: dist/*.zip
