@@ -1,4 +1,4 @@
-EDOPro HD Sync for Windows
+EDOPro HD Cards Downloader for Windows
 ==========================
 
 What it does
@@ -15,8 +15,10 @@ How to use it
    wrong one, press "Change..." and pick the right folder.
 4. Tick what you want, then press Start.
 
-That's it. There is nothing to install, and nothing is left behind on your
-PC - the app is this one file, and you can put it wherever you like.
+That's it. There is nothing to install, and the download contains only this
+app and this ReadMe. You can put the app wherever you like; its small settings,
+retry caches, and optional reports live in your Windows user profile instead of
+beside the executable, so it also works from protected folders.
 
 If Windows SmartScreen warns you, click "More info" then "Run anyway". That
 warning appears because the app is not code-signed, not because anything is
@@ -33,7 +35,7 @@ Helpful notes
   just the cards in your saved decks.
 - "Show coverage" tells you how much artwork you have without downloading.
 - The app tells you when a new version is out. Download it from
-  https://github.com/cntrl-alt-lenny/EDOPro-HD-Sync/releases and replace
+  https://github.com/cntrl-alt-lenny/EDOPro-HD-Cards-Downloader/releases and replace
   this file with the new one.
 
 Quick sanity check

@@ -1,5 +1,5 @@
 """
-Configuration management for EDOPro HD Sync.
+Configuration management for EDOPro HD Cards Downloader.
 
 Loads settings from (in priority order):
   1. CLI arguments (highest priority)
@@ -63,6 +63,33 @@ DEFAULTS = {
 }
 
 CONFIG_FILENAME = "config.json"
+# Keep this directory name for compatibility with existing packaged installs.
+APP_DATA_NAME = "EDOPro HD Sync"
+
+
+def user_data_dir() -> str:
+    """Return a writable per-user directory for packaged-app state."""
+    home = os.path.expanduser("~")
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        base = base or os.path.join(home, "AppData", "Local")
+    elif sys.platform == "darwin":
+        base = os.path.join(home, "Library", "Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    return os.path.join(base, APP_DATA_NAME)
+
+
+def _runtime_dir() -> str:
+    """Return the directory containing the script or packaged executable."""
+    runtime = sys.executable if getattr(sys, "frozen", False) else __file__
+    return os.path.dirname(os.path.abspath(runtime))
+
+
+def default_config_path() -> str:
+    """Return the default config path for this kind of install."""
+    directory = user_data_dir() if getattr(sys, "frozen", False) else _runtime_dir()
+    return os.path.join(directory, CONFIG_FILENAME)
 
 
 def _pick_value(cli_val, file_val, default):
@@ -111,12 +138,20 @@ def _load_config_file(path: str) -> dict:
 
 
 def _write_config_file(path: str, config_data: dict) -> None:
-    """Write config data with a stable, user-editable layout."""
+    """Write config data atomically with a stable, user-editable layout."""
     parent_dir = os.path.dirname(os.path.abspath(path))
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(config_data, f, indent=2)
+    tmp_path = f"{path}.part"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.remove(tmp_path)
+        raise
 
 
 def generate_default_config(path: str) -> None:
@@ -196,10 +231,20 @@ def _edopro_folder_score(path: str) -> int:
     return 0
 
 
-def _detect_packaged_edopro_path(config_path: str) -> str | None:
+def _detect_packaged_edopro_path(runtime_path: str) -> str | None:
     """Guess the EDOPro folder for packaged builds living inside the game folder."""
-    tool_dir = os.path.dirname(os.path.abspath(config_path))
+    tool_dir = os.path.dirname(os.path.abspath(runtime_path))
     candidates = [tool_dir, os.path.dirname(tool_dir)]
+    # A macOS executable lives in <app>.app/Contents/MacOS/. Also consider
+    # the folder containing the app in case the user keeps both apps together.
+    if sys.platform == "darwin":
+        candidates.extend(
+            (
+                os.path.dirname(os.path.dirname(tool_dir)),
+                os.path.dirname(os.path.dirname(os.path.dirname(tool_dir))),
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(tool_dir)))),
+            )
+        )
     for candidate in candidates:
         if looks_like_edopro_folder(candidate):
             return candidate
@@ -307,7 +352,7 @@ def find_edopro_folder(first_guesses: list[str] | None = None) -> str | None:
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="EDOPro HD Sync",
+        prog="EDOPro HD Cards Downloader",
         description="Automatically download missing HD card artwork for EDOPro.",
     )
     p.add_argument(
@@ -353,7 +398,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config",
         type=str,
         default=None,
-        help="Use a custom config file (default: config.json beside the executable/script).",
+        help=(
+            "Use a custom config file (default: beside the script from source, "
+            "or in the per-user app-data folder when packaged)."
+        ),
     )
     p.add_argument(
         "--generate-config",
@@ -369,7 +417,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--save-report",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Write a timestamped .txt sync report (includes failed cards) beside the executable/script.",
+        help="Write a timestamped .txt sync report (includes failed cards) beside config.json.",
     )
     p.add_argument(
         "--no-pause",
@@ -477,14 +525,10 @@ class Config:
         parser = _build_parser()
         self.argv: list[str] = list(sys.argv[1:] if argv is None else argv)
         self.cli = parser.parse_args(self.argv)
-        default_config_base = sys.executable if getattr(sys, "frozen", False) else __file__
         self.config_path: str = (
             os.path.abspath(os.path.expanduser(self.cli.config))
             if self.cli.config
-            else os.path.join(
-                os.path.dirname(os.path.abspath(default_config_base)),
-                CONFIG_FILENAME,
-            )
+            else default_config_path()
         )
 
         if self.cli.generate_config:
@@ -492,14 +536,35 @@ class Config:
             raise SystemExit(0)
 
         file_cfg = _load_config_file(self.config_path)
+        if getattr(sys, "frozen", False) and not file_cfg and not self.cli.config:
+            # Versions before the per-user state change stored config beside the
+            # executable. Read it once and migrate it when the new location is
+            # writable; the app still works if the old bundle is read-only.
+            legacy_path = os.path.join(_runtime_dir(), CONFIG_FILENAME)
+            if os.path.abspath(legacy_path) != os.path.abspath(self.config_path):
+                legacy_cfg = _load_config_file(legacy_path)
+                if legacy_cfg:
+                    file_cfg = legacy_cfg
+                    with contextlib.suppress(OSError):
+                        _write_config_file(self.config_path, legacy_cfg)
 
         self.edopro_path: str = ""
         self.pics_path: str = ""
         self.manual_map_file: str = os.path.join(
             os.path.dirname(self.config_path), "manual_map.json"
         )
+        if (
+            getattr(sys, "frozen", False)
+            and not self.cli.config
+            and not os.path.exists(self.manual_map_file)
+        ):
+            # Keep manual overrides made by older packaged versions working
+            # after the state directory moved out of the application folder.
+            legacy_manual_map = os.path.join(_runtime_dir(), "manual_map.json")
+            if os.path.exists(legacy_manual_map):
+                self.manual_map_file = legacy_manual_map
         detected_edopro_path = (
-            _detect_packaged_edopro_path(self.config_path)
+            _detect_packaged_edopro_path(sys.executable)
             if getattr(sys, "frozen", False)
             and self.cli.edopro_path is None
             and file_cfg.get("edopro_path") is None
@@ -528,7 +593,7 @@ class Config:
         self.timeout = _ensure_int("timeout", self.timeout, DEFAULTS["timeout"])
 
         self.concurrency = _clamp_min_int("concurrency", self.concurrency, 1)
-        self.max_retries = _clamp_min_int("max_retries", self.max_retries, 1)
+        self.max_retries = _clamp_min_int("max_retries", self.max_retries, 0)
         self.timeout = _clamp_min_int("timeout", self.timeout, 1)
 
         sources = dict(DEFAULTS["sources"])

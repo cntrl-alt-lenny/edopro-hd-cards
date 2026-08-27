@@ -111,6 +111,33 @@ class RunAppFallbackTests(unittest.TestCase):
 
 
 class DeckHelpersTests(unittest.TestCase):
+    def test_recommends_deck_first_for_empty_install_with_decks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pics = os.path.join(tmp, "pics")
+            deck = os.path.join(tmp, "deck", "saved")
+            os.makedirs(deck)
+            with open(os.path.join(deck, "starter.ydk"), "w", encoding="utf-8") as f:
+                f.write("#main\n46986414\n")
+
+            self.assertTrue(
+                gui._recommended_my_decks(SimpleNamespace(pics_path=pics, edopro_path=tmp))
+            )
+
+    def test_does_not_recommend_deck_first_after_art_is_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pics = os.path.join(tmp, "pics")
+            os.makedirs(pics)
+            for cid in range(500):
+                with open(os.path.join(pics, f"{cid}.jpg"), "wb") as f:
+                    f.write(b"x")
+            os.makedirs(os.path.join(tmp, "deck"))
+            with open(os.path.join(tmp, "deck", "starter.ydk"), "w", encoding="utf-8") as f:
+                f.write("#main\n46986414\n")
+
+            self.assertFalse(
+                gui._recommended_my_decks(SimpleNamespace(pics_path=pics, edopro_path=tmp))
+            )
+
     def test_count_deck_files_walks_subfolders(self):
         with tempfile.TemporaryDirectory() as tmp:
             os.makedirs(os.path.join(tmp, "AI"))

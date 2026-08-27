@@ -54,6 +54,13 @@ class FailureCacheTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.path + ".part"))
         self.assertTrue(os.path.exists(self.path))
 
+    def test_save_creates_a_missing_state_directory(self):
+        nested_path = os.path.join(self.temp_dir.name, "state", "failed_cards.json")
+
+        main.save_failure_cache(nested_path, {1: time.time()})
+
+        self.assertEqual(set(main.load_failure_cache(nested_path)), {1})
+
 
 if __name__ == "__main__":
     unittest.main()

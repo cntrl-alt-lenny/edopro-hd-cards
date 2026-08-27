@@ -9,8 +9,8 @@ from unittest import mock
 
 import main
 
-PNG_BODY = main.PNG_MAGIC + b"\x00" * 1024
-JPEG_BODY = b"\xff\xd8\xff" + b"\x00" * 1024
+PNG_BODY = main.PNG_MAGIC + b"\x00" * 1024 + b"IEND"
+JPEG_BODY = b"\xff\xd8\xff" + b"\x00" * 1024 + b"\xff\xd9"
 
 
 class _Resp:
@@ -37,7 +37,10 @@ class _Session:
     """Returns the release JSON for the API call and image bytes for each asset."""
 
     def __init__(self, release_json, asset_body=PNG_BODY, asset_status=200):
-        self.release_json = release_json
+        self.release_json = {
+            "body": "Attribution: test creator\nLicense: test license",
+            **release_json,
+        }
         self.asset_body = asset_body
         self.asset_status = asset_status
         self.requested = []
@@ -109,6 +112,16 @@ class CuratedTexturesTests(unittest.TestCase):
                 return _Resp(status=404)
 
         self.assertEqual(self._run(_NotFound()), (0, 0, 0))
+
+    def test_skips_release_without_attribution_or_license(self):
+        release = {
+            "body": "Curated files with no provenance.",
+            "assets": [{"name": "bg.png", "browser_download_url": "http://x/bg.png"}],
+        }
+        session = _Session(release)
+
+        self.assertEqual(self._run(session), (0, 0, 0))
+        self.assertEqual(session.requested, [main.TEXTURES_RELEASE_API])
 
     def test_counts_failed_asset_downloads(self):
         release = {"assets": [{"name": "bg.png", "browser_download_url": "http://x/bg.png"}]}
@@ -193,8 +206,16 @@ class ListTexturePacksTests(unittest.TestCase):
     def test_filters_to_textures_releases(self):
         releases = [
             {"tag_name": "v4.8.0", "name": "App 4.8.0"},
-            {"tag_name": "textures", "name": "Curated Textures"},
-            {"tag_name": "textures-dark", "name": "Dark Pack"},
+            {
+                "tag_name": "textures",
+                "name": "Curated Textures",
+                "body": "Attribution: test creator\nLicense: test license",
+            },
+            {
+                "tag_name": "textures-dark",
+                "name": "Dark Pack",
+                "body": "Attribution: test creator\nLicense: test license",
+            },
             {"tag_name": "random", "name": "Nope"},
         ]
         packs = asyncio.run(main.list_texture_packs(_ReleasesSession(releases)))

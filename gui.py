@@ -60,7 +60,7 @@ CHECKBOX_GROUPS = [
             (
                 "my_decks",
                 "Only cards from my decks",
-                "Much faster — just the cards you actually play",
+                "Recommended first run — much faster, then sync the rest later",
                 False,
             ),
             (
@@ -108,6 +108,26 @@ CHECKBOX_GROUPS = [
 ]
 
 CHECKBOXES = [box for _section, boxes in CHECKBOX_GROUPS for box in boxes]
+
+
+def _recommended_my_decks(cfg) -> bool:
+    """Recommend deck-first sync on an empty install that already has decks."""
+    pics_path = getattr(cfg, "pics_path", "") or ""
+    image_count = 0
+    if os.path.isdir(pics_path):
+        with contextlib.suppress(OSError), os.scandir(pics_path) as entries:
+            image_count = sum(
+                1 for entry in entries if entry.is_file() and entry.name.endswith(".jpg")
+            )
+    if image_count >= 500:
+        return False
+    deck_dir = os.path.join(getattr(cfg, "edopro_path", "") or "", "deck")
+    if not os.path.isdir(deck_dir):
+        return False
+    for _root, _dirs, files in os.walk(deck_dir):
+        if any(name.endswith(".ydk") for name in files):
+            return True
+    return False
 
 
 def _elide_path(path: str, limit: int = 36) -> str:
@@ -386,7 +406,7 @@ class _App:
             raise GuiUnavailable(str(exc)) from exc
 
         try:
-            self.root.title(f"EDOPro HD Sync v{version}")
+            self.root.title(f"EDOPro HD Cards Downloader v{version}")
             self.root.resizable(False, False)
             _apply_style(self.root)
             _apply_windows_dark_titlebar(self.root)
@@ -460,7 +480,7 @@ class _App:
         header = ttk.Frame(f)
         header.grid(sticky="ew")
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="EDOPro HD Sync", style="Title.TLabel").grid(
+        ttk.Label(header, text="EDOPro HD Cards Downloader", style="Title.TLabel").grid(
             row=0, column=0, sticky="w"
         )
         ttk.Label(header, text=f"v{self.version}", style="Chip.TLabel").grid(
@@ -494,6 +514,7 @@ class _App:
         defaults = {
             "field_art": getattr(self.cfg, "field_art", True),
             "original_text": getattr(self.cfg, "original_text", False),
+            "my_decks": _recommended_my_decks(self.cfg),
         }
         for section, boxes in CHECKBOX_GROUPS:
             ttk.Label(f, text=section, style="Section.TLabel").grid(sticky="w", pady=(0, 5))

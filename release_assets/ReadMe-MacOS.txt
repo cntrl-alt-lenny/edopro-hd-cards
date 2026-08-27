@@ -1,4 +1,4 @@
-EDOPro HD Sync for macOS
+EDOPro HD Cards Downloader for macOS
 ========================
 
 How to use it
@@ -23,8 +23,12 @@ Helpful notes
 -------------
 - Everything happens in one window: tick what you want (field art,
   only your decks, textures, repair), press Start, and watch the progress.
-- Nothing is installed. The app is one item you can put anywhere and
-  delete when you're done - nothing is left behind on your Mac.
+- Nothing is installed. The download contains one app and this ReadMe. You can
+  put the app anywhere; its small settings, retry caches, and optional reports
+  live in ~/Library/Application Support/EDOPro HD Sync instead of beside the
+  app, so it also works from protected folders.
+- The published app is built for Intel Macs and runs on Apple Silicon through
+  Rosetta.
 - Only missing artwork is downloaded, so repeat runs are fast. Tick
   "Re-download everything" in the window for a full refresh.
 - "Show coverage" tells you how much artwork you have without downloading.

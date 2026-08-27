@@ -10,8 +10,8 @@ from unittest import mock
 
 import main
 
-JPEG_BODY = b"\xff\xd8\xff" + b"\x00" * 1024
-PNG_BODY = main.PNG_MAGIC + b"\x00" * 1024
+JPEG_BODY = b"\xff\xd8\xff" + b"\x00" * 1024 + b"\xff\xd9"
+PNG_BODY = main.PNG_MAGIC + b"\x00" * 1024 + b"IEND"
 
 FIELD_SPELL_TYPE = 0x80002
 PLAIN_SPELL_TYPE = 0x2
@@ -131,7 +131,7 @@ class DownloadFieldArtTests(unittest.TestCase):
         self.assertNotIn(22702055, stats.field_transient_ids)
 
     def test_timeout_is_transient_field_failure(self):
-        stats = self._download(_FakeSession([TimeoutError()]))
+        stats = self._download(_FakeSession([TimeoutError(), TimeoutError()]))
 
         self.assertEqual(stats.field_failed, 1)
         self.assertIn(22702055, stats.field_transient_ids)

@@ -1,5 +1,5 @@
 """
-EDOPro HD Sync - Automatically download missing HD card artwork for EDOPro.
+EDOPro HD Cards Downloader - Automatically download missing HD card artwork for EDOPro.
 
 Improvements over the original:
   - Rich progress bars and color-coded console output
@@ -133,9 +133,42 @@ def _truncate(text: str, max_len: int) -> str:
     return text if len(text) <= max_len else text[: max_len - 1] + "…"
 
 
-LATEST_RELEASE_API = "https://api.github.com/repos/cntrl-alt-lenny/EDOPro-HD-Sync/releases/latest"
-TEXTURES_RELEASES_API = "https://api.github.com/repos/cntrl-alt-lenny/EDOPro-HD-Sync/releases"
+LATEST_RELEASE_API = (
+    "https://api.github.com/repos/cntrl-alt-lenny/EDOPro-HD-Cards-Downloader/releases/latest"
+)
+TEXTURES_RELEASES_API = (
+    "https://api.github.com/repos/cntrl-alt-lenny/EDOPro-HD-Cards-Downloader/releases"
+)
 TEXTURES_RELEASE_API = f"{TEXTURES_RELEASES_API}/tags/textures"
+
+
+def _custom_ca_bundle_path() -> str | None:
+    """Return an existing custom CA bundle path, if one is configured."""
+    for env_name in ("EDOPRO_CA_BUNDLE", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"):
+        configured_path = os.environ.get(env_name)
+        if not configured_path:
+            continue
+        expanded_path = os.path.abspath(os.path.expanduser(configured_path))
+        if os.path.isfile(expanded_path):
+            return expanded_path
+    return None
+
+
+def _create_http_session(
+    *, limit: int | None = None, limit_per_host: int | None = None
+) -> aiohttp.ClientSession:
+    """Create an HTTPS session that honors standard proxy and CA-bundle settings."""
+    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    custom_ca_bundle = _custom_ca_bundle_path()
+    if custom_ca_bundle:
+        ssl_ctx.load_verify_locations(cafile=custom_ca_bundle)
+    connector_kwargs: dict[str, object] = {"ssl": ssl_ctx}
+    if limit is not None:
+        connector_kwargs["limit"] = limit
+    if limit_per_host is not None:
+        connector_kwargs["limit_per_host"] = limit_per_host
+    connector = aiohttp.TCPConnector(**connector_kwargs)
+    return aiohttp.ClientSession(connector=connector, trust_env=True)
 
 
 def _parse_version(text: str) -> tuple[int, ...]:
@@ -154,7 +187,7 @@ def _parse_version(text: str) -> tuple[int, ...]:
 def _update_message(latest: str) -> str:
     return (
         f"[yellow]A newer version ({latest}) is available — "
-        "https://github.com/cntrl-alt-lenny/EDOPro-HD-Sync/releases/latest\n"
+        "https://github.com/cntrl-alt-lenny/EDOPro-HD-Cards-Downloader/releases/latest\n"
         "Download it and replace this app with the new one.[/yellow]"
     )
 
@@ -167,9 +200,7 @@ async def notify_if_update_available(cfg: Config | None = None) -> None:
     the user about a new release. Silent on any failure.
     """
     try:
-        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-        connector = aiohttp.TCPConnector(ssl=ssl_ctx)
-        async with aiohttp.ClientSession(connector=connector) as session:
+        async with _create_http_session() as session:
             latest = await check_for_update(session, VERSION)
     except Exception:
         return
@@ -697,6 +728,7 @@ def save_failure_cache(path: str, cache: dict[int, float]) -> None:
     """Write the cache atomically; swallow errors so a bad disk never fails a sync."""
     tmp = f"{path}.part"
     try:
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({str(cid): ts for cid, ts in cache.items()}, f)
         os.replace(tmp, path)
@@ -813,22 +845,30 @@ class DownloadStats:
 # far larger than any error page. Checking both guards against an HTML error
 # page or a truncated response being saved as a .jpg when the server replies 200.
 JPEG_MAGIC = b"\xff\xd8\xff"
+JPEG_END = b"\xff\xd9"
 MIN_IMAGE_BYTES = 512
+MAX_IMAGE_BYTES = 25 * 1024 * 1024
 
 
 def _looks_like_jpeg(content: bytes) -> bool:
-    """Return True when `content` is a plausibly real JPEG image."""
-    return len(content) >= MIN_IMAGE_BYTES and content.startswith(JPEG_MAGIC)
+    """Return True when `content` has the basic shape of a complete JPEG."""
+    return (
+        len(content) >= MIN_IMAGE_BYTES
+        and content.startswith(JPEG_MAGIC)
+        and JPEG_END in content[-64:]
+    )
 
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 def _looks_like_image(content: bytes) -> bool:
-    """Return True for a plausibly real PNG or JPEG (used for curated textures)."""
-    return len(content) >= MIN_IMAGE_BYTES and (
-        content.startswith(JPEG_MAGIC) or content.startswith(PNG_MAGIC)
-    )
+    """Return True for a complete-looking PNG or JPEG (used for textures)."""
+    if len(content) < MIN_IMAGE_BYTES:
+        return False
+    if content.startswith(JPEG_MAGIC):
+        return JPEG_END in content[-64:]
+    return content.startswith(PNG_MAGIC) and b"IEND" in content[-32:]
 
 
 def field_art_dir(cfg: Config) -> str:
@@ -846,6 +886,7 @@ def has_field_art(cfg: Config, card_id: int) -> bool:
 def find_broken_field_images(field_dir: str, known_ids: set[int]) -> list[int]:
     """Field art IDs whose pics/field image exists but isn't a valid JPEG/PNG."""
     broken: list[int] = []
+    seen: set[int] = set()
     if not os.path.isdir(field_dir):
         return broken
     for entry in os.listdir(field_dir):
@@ -861,11 +902,10 @@ def find_broken_field_images(field_dir: str, known_ids: set[int]) -> list[int]:
         path = os.path.join(field_dir, entry)
         try:
             with open(path, "rb") as f:
-                head = f.read(16)
-            if os.path.getsize(path) < MIN_IMAGE_BYTES or not (
-                head.startswith(JPEG_MAGIC) or head.startswith(PNG_MAGIC)
-            ):
+                content = f.read()
+            if not _looks_like_image(content) and cid not in seen:
                 broken.append(cid)
+                seen.add(cid)
         except OSError:
             continue
     return broken
@@ -891,11 +931,8 @@ def find_broken_images(pics_path: str, known_ids: set[int]) -> list[int]:
             continue
         path = os.path.join(pics_path, entry)
         try:
-            if os.path.getsize(path) < MIN_IMAGE_BYTES:
-                broken.append(cid)
-                continue
             with open(path, "rb") as f:
-                if f.read(len(JPEG_MAGIC)) != JPEG_MAGIC:
+                if not _looks_like_jpeg(f.read()):
                     broken.append(cid)
         except OSError:
             continue
@@ -947,24 +984,38 @@ async def _try_download(
 ) -> FetchResult:
     """
     Attempt to GET `url` and save to `filepath`.
-    Retries up to `max_retries` times with exponential backoff.
+    Retry up to `max_retries` times after the initial attempt, with
+    exponential backoff between attempts.
     `is_valid` decides whether the downloaded bytes are an acceptable image.
     """
     tmp_path = f"{filepath}.part"
-    for attempt in range(1, max_retries + 1):
+    _remove_quietly(tmp_path)
+    total_attempts = max_retries + 1
+    for attempt in range(1, total_attempts + 1):
         retry_after: float | None = None
         try:
             async with session.get(url, timeout=timeout) as resp:
                 if resp.status == 200:
+                    content_length = resp.headers.get("Content-Length")
+                    try:
+                        if content_length is not None and int(content_length) > MAX_IMAGE_BYTES:
+                            _remove_quietly(tmp_path)
+                            return FetchResult.ERROR
+                    except (TypeError, ValueError):
+                        pass
                     content = await resp.read()
+                    if len(content) > MAX_IMAGE_BYTES:
+                        _remove_quietly(tmp_path)
+                        return FetchResult.ERROR
                     if is_valid(content):
                         with open(tmp_path, "wb") as file_obj:
                             file_obj.write(content)
                         os.replace(tmp_path, filepath)
                         return FetchResult.OK
-                    if attempt >= max_retries:
+                    if attempt >= total_attempts:
                         # A 200 with a non-image body is usually an error or
                         # anti-bot page, so treat it as transient.
+                        _remove_quietly(tmp_path)
                         return FetchResult.ERROR
                 elif resp.status == 404:
                     return FetchResult.MISSING
@@ -979,7 +1030,7 @@ async def _try_download(
             _remove_quietly(tmp_path)
             return FetchResult.ERROR
 
-        if attempt < max_retries:
+        if attempt < total_attempts:
             delay = retry_after if retry_after is not None else 2 ** (attempt - 1)
             await asyncio.sleep(delay)
 
@@ -1165,6 +1216,17 @@ def _textures_release_api(pack: str | None) -> str:
     return f"{TEXTURES_RELEASES_API}/tags/{tag}"
 
 
+def _texture_release_is_attributed(release: object) -> bool:
+    """Require visible attribution and licensing before downloading textures."""
+    if not isinstance(release, dict):
+        return False
+    body = release.get("body")
+    if not isinstance(body, str):
+        return False
+    normalized = body.casefold()
+    return "attribution:" in normalized and "license:" in normalized
+
+
 async def download_curated_textures(
     session: aiohttp.ClientSession, cfg: Config, pack: str | None = None
 ) -> tuple[int, int, int]:
@@ -1189,6 +1251,13 @@ async def download_curated_textures(
             data = await resp.json()
     except Exception as exc:
         console.print(f"[yellow]Could not fetch the curated texture list: {exc}[/yellow]")
+        return (0, 0, 0)
+
+    if not _texture_release_is_attributed(data):
+        console.print(
+            "[yellow]Skipping curated textures: the pack release has no explicit "
+            "Attribution: and License: information.[/yellow]"
+        )
         return (0, 0, 0)
 
     assets = [
@@ -1257,8 +1326,12 @@ async def list_texture_packs(session: aiohttp.ClientSession) -> list[tuple[str, 
             continue
         label = rel.get("name") or tag
         if tag == "textures":
+            if not _texture_release_is_attributed(rel):
+                continue
             packs.append(("default", label))
         elif tag.startswith("textures-"):
+            if not _texture_release_is_attributed(rel):
+                continue
             packs.append((tag[len("textures-") :], label))
     return packs
 
@@ -1361,8 +1434,9 @@ def _write_report(stats: DownloadStats, cfg: Config, runtime_seconds: float) -> 
         f"sync-report-{timestamp}.txt",
     )
     try:
+        os.makedirs(os.path.dirname(report_path), exist_ok=True)
         with open(report_path, "w", encoding="utf-8") as f:
-            f.write("EDOPro HD Sync Report\n")
+            f.write("EDOPro HD Cards Downloader Report\n")
             f.write("=" * 40 + "\n")
             f.write(f"Generated: {now.strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"Runtime:   {format_duration(runtime_seconds)}\n")
@@ -1625,8 +1699,12 @@ def _format_size(nbytes: int) -> str:
     return f"{nbytes / 1024:.0f} KB"
 
 
-def _scan_art_folder(folder: str, extensions: tuple[str, ...]) -> tuple[set[int], int]:
-    """Return (card IDs with an image on disk, total bytes) for one art folder."""
+def _scan_art_folder(
+    folder: str,
+    extensions: tuple[str, ...],
+    is_valid: Callable[[bytes], bool] | None = None,
+) -> tuple[set[int], int]:
+    """Return valid image IDs and total recognized-file bytes for one art folder."""
     ids: set[int] = set()
     size = 0
     if not os.path.isdir(folder):
@@ -1640,6 +1718,11 @@ def _scan_art_folder(folder: str, extensions: tuple[str, ...]) -> tuple[set[int]
                 continue
             try:
                 size += entry.stat().st_size
+                if is_valid is not None:
+                    with open(entry.path, "rb") as file_obj:
+                        content = file_obj.read()
+                    if not is_valid(content):
+                        continue
             except OSError:
                 continue
             try:
@@ -1651,8 +1734,10 @@ def _scan_art_folder(folder: str, extensions: tuple[str, ...]) -> tuple[set[int]
 
 def collect_coverage_stats(cfg: Config, id_to_name: dict[int, str], field_ids: set[int]) -> dict:
     """Gather how much artwork is on disk versus what the databases know about."""
-    card_files, card_bytes = _scan_art_folder(cfg.pics_path, ("jpg",))
-    field_files, field_bytes = _scan_art_folder(field_art_dir(cfg), ("jpg", "png"))
+    card_files, card_bytes = _scan_art_folder(cfg.pics_path, ("jpg",), _looks_like_jpeg)
+    field_files, field_bytes = _scan_art_folder(
+        field_art_dir(cfg), ("jpg", "png"), _looks_like_image
+    )
     cached = len(load_failure_cache(_failure_cache_path(cfg)))
     field_cached = len(load_failure_cache(_field_failure_cache_path(cfg)))
     return {
@@ -1700,7 +1785,7 @@ def print_coverage_stats(cfg: Config, id_to_name: dict[int, str], field_ids: set
 async def run(cfg: Config):
     started_at = perf_counter()
 
-    console.print(f"[bold cyan]EDOPro HD Sync[/bold cyan] [dim]v{VERSION}[/dim]")
+    console.print(f"[bold cyan]EDOPro HD Cards Downloader[/bold cyan] [dim]v{VERSION}[/dim]")
 
     if cfg.health_check:
         if not run_health_check(cfg):
@@ -1954,14 +2039,10 @@ async def run(cfg: Config):
     for card_id in missing_ids:
         queue.put_nowait(card_id)
 
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-    connector = aiohttp.TCPConnector(
+    async with _create_http_session(
         limit=cfg.concurrency,
         limit_per_host=min(cfg.concurrency, 25),
-        ssl=ssl_ctx,
-    )
-
-    async with aiohttp.ClientSession(connector=connector) as session:
+    ) as session:
         if not cfg.dry_run:
             # Run the connectivity test and update check at the same time so a
             # slow connection doesn't add both timeouts back-to-back before the

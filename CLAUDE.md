@@ -1,4 +1,4 @@
-# EDOPro HD Sync - Project Guide for Claude
+# EDOPro HD Cards Downloader - Project Guide for Claude
 
 ## What this is
 A tool that automatically downloads HD card artwork for the EDOPro Yu-Gi-Oh! simulator (ProjectIgnis fork). Users place it in their EDOPro folder and run it - it scans the card databases, finds missing images, and downloads them from the best available source.
@@ -12,7 +12,7 @@ The owner is a non-programmer. Keep explanations plain and avoid jargon. Prefer 
 - `EDOPro-HD-Sync-macOS-vVERSION.zip`
 - `EDOPro-HD-Sync-Linux-vVERSION.zip`
 
-**Each zip contains exactly two files: the app and a platform-specific `ReadMe.txt`.** That is the whole promise of the download — unzip, double-click, done. `build.yml` fails the build if a zip ever grows a third entry, loses either file, or ships a non-executable app. Nothing is installed and nothing is left on the user's machine: no support folder, no `%LOCALAPPDATA%`, no `~/Library/Application Support`.
+**Each zip contains exactly two files: the app and a platform-specific `ReadMe.txt`.** That is the whole promise of the download — unzip, double-click, done. `build.yml` fails the build if a zip ever grows a third entry, loses either file, or ships a non-executable app. Nothing is installed and no support folder is created beside the download; small settings, retry caches, and optional reports use the normal per-user application-data directory for the platform.
 
 **The Windows build must stay `--windowed`, and `build.yml` checks the PE subsystem byte to prove it.** A console build shows a stray black console window behind the app on every double-click. Do **not** try to fix that at runtime by hiding the console: that was tried and it does not hold. The console Explorer creates for a double-click is not the same object as the pseudo-console a terminal hands a child process, so the fix cannot be verified from any terminal — it looked like it worked in testing and still shipped the bug. Not creating a console at all is the only version that cannot regress. Output still reaches an inherited pipe or terminal, so `--health-check` and the CI smoke test are unaffected. On macOS `--windowed` is what *produces* the `.app` bundle, so it is required there too (see the macOS packaging rule above).
 
@@ -48,7 +48,7 @@ release_assets/ReadMe-*.txt # the ReadMe shipped beside the app in each zip
 Plain packaged runs open a branded three-screen tkinter app (navy/gold, ttk 'clam' theme): OPTIONS (grouped tick-boxes + Start / Show coverage), PROGRESS (determinate gold bar, current-card status, live count, Cancel), and SUMMARY (hero numbers + unavailable breakdown / coverage table). Architecture: Tk owns the main thread; `gui.run_app(cfg, VERSION, run, _apply_gui_choices)` runs `main.run()` in a daemon worker thread and communicates through a queue via runtime hooks on Config — `gui_progress` (a Rich-Progress-compatible adapter), `folder_picker` (worker asks the window to show the native directory dialog), `coverage_sink`, `notice_sink`, and `cancel_event` (workers check it between downloads, so Cancel finishes in-flight files and still writes the failure caches). `run()` returns the DownloadStats the summary screen renders; `cfg.interactive_prompts=False` mutes all console questions. Rules in `_should_show_gui`: `--gui` forces it (even from source), `--no-gui` or any explicit power flag skips it, non-frozen runs never show it by default, and any Tk failure raises `gui.GuiUnavailable` → console flow. The build workflow hard-fails if tkinter is missing on a CI runner; Windows gets DPI awareness + a dark title bar via ctypes (see the pitfall comments in gui.py before touching styling).
 
 ## Deck-first sync
-`--my-decks` (or the window's tick-box) points the deck filter at `<edopro>/deck`, scanned recursively for `.ydk`. On a fresh install (>2,000 cards indexed, <500 images on disk) the console flow asks "Quick start: only sync the cards in your N deck(s)?" before committing to a full ~13,000-card download.
+`--my-decks` (or the window's tick-box) points the deck filter at `<edopro>/deck`, scanned recursively for `.ydk`. On a fresh install (>2,000 cards indexed, <500 images on disk) the console flow asks "Quick start: only sync the cards in your N deck(s)?" before committing to a full ~13,000-card download. The packaged options window checks this automatically and recommends deck-first mode when it finds decks on a mostly empty install.
 
 ## Architecture
 
@@ -94,8 +94,11 @@ Cards that fail to download are remembered for 14 days so repeat runs skip them 
 ### Concurrency
 50 async workers drain a shared `asyncio.Queue`. Each worker loops until the queue is empty. This keeps a steady number of requests in flight without spawning tens of thousands of coroutines.
 
-### SSL certificates
-PyInstaller bundles do not include system SSL certs automatically. The app uses `certifi` and passes it to `aiohttp.TCPConnector` via `ssl.create_default_context(cafile=certifi.where())`. The build uses `--collect-data certifi` to include the cert bundle. **Do not remove this - it will silently break all downloads.**
+### SSL certificates and proxies
+PyInstaller bundles do not include system SSL certs automatically. The app uses `certifi` and passes it to `aiohttp.TCPConnector` via `ssl.create_default_context(cafile=certifi.where())`. The build uses `--collect-data certifi` to include the cert bundle. **Do not remove this - it will silently break all downloads.** `_create_http_session()` also uses `trust_env=True`, so standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` settings work. `EDOPRO_CA_BUNDLE` can add a private PEM CA bundle for managed networks.
+
+### Optional textures
+Texture packs are separate GitHub releases. The app only lists or downloads a pack when its release notes contain explicit `Attribution:` and `License:` lines. Never add texture assets to a release without confirming their creator and redistribution terms.
 
 ## Release process
 Push a version tag -> GitHub Actions builds 3 binaries -> attached to a GitHub Release automatically.
@@ -110,6 +113,10 @@ The CI matrix builds:
 - `EDOPro-HD-Sync-Linux-vVERSION.zip`
 
 Each bundle includes a platform-specific `ReadMe.txt`. The workflow also smoke-tests the packaged binary with `--health-check` before the release asset is published.
+
+The macOS job uses an Intel runner. The resulting single macOS download runs
+natively on Intel and through Rosetta on Apple Silicon; keeping one binary
+avoids turning the Releases page into multiple architecture downloads.
 
 `fail-fast: false` is set so a failure on one platform does not cancel the others.
 
@@ -137,7 +144,8 @@ There is no self-updating machinery. `check_for_update()` compares `VERSION` aga
 ## Output files
 - `pics/{id}.jpg` - downloaded card images (in the EDOPro folder)
 - `pics/field/{id}.jpg` - Field Spell playmat artwork
-- `failed_cards.json` / `failed_fields.json` - 14-day caches of definitively-missing art (beside the exe)
-- `config.json` - optional user config (generated with `--generate-config`)
+- `failed_cards.json` / `failed_fields.json` - 14-day caches of definitively-missing art (in the packaged app's per-user data directory)
+- `config.json` - user config (beside the script from source; in the packaged app's per-user data directory; override with `--config PATH`)
+- `sync-report-*.txt` - optional timestamped reports beside `config.json`
 - `manual_map.json` - optional per-card ID overrides (user-created, not tracked in git)
 - `manual_map.example.json` - copyable example showing the override format

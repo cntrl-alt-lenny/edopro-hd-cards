@@ -1,4 +1,4 @@
-EDOPro HD Sync for Linux
+EDOPro HD Cards Downloader for Linux
 ========================
 
 What it does
@@ -16,8 +16,9 @@ How to use it
    the wrong one, press "Change..." and pick the right folder.
 4. Tick what you want, then press Start.
 
-That's it. There is nothing to install, and nothing is left behind on your
-system - the app is this one file, and you can put it wherever you like.
+That's it. There is nothing to install, and the download contains only this
+app and this ReadMe. You can put the app wherever you like; its small settings,
+retry caches, and optional reports live in your normal per-user config folder.
 
 If your file manager will not run it, mark it executable first:
   chmod +x EDOPro-HD-Sync
@@ -32,7 +33,7 @@ Helpful notes
   just the cards in your saved decks.
 - "Show coverage" tells you how much artwork you have without downloading.
 - The app tells you when a new version is out. Download it from
-  https://github.com/cntrl-alt-lenny/EDOPro-HD-Sync/releases and replace
+  https://github.com/cntrl-alt-lenny/EDOPro-HD-Cards-Downloader/releases and replace
   this file with the new one.
 - Works on Steam Deck (Desktop Mode), Ubuntu, Fedora, Arch, etc. -
   anything x86_64 Linux.

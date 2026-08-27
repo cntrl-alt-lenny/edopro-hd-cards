@@ -14,8 +14,8 @@ JPEG_MAGIC = b"\xff\xd8\xff"
 
 
 def _jpeg_body(size: int = 1024) -> bytes:
-    """A payload that passes _looks_like_jpeg: JPEG magic bytes + enough length."""
-    return JPEG_MAGIC + b"\x00" * size
+    """A payload that passes _looks_like_jpeg: magic, body, and EOI marker."""
+    return JPEG_MAGIC + b"\x00" * size + b"\xff\xd9"
 
 
 class _FakeResponse:
@@ -81,26 +81,26 @@ class TryDownloadTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.filepath + ".part"))
 
     def test_rejects_payload_below_512_bytes(self):
-        session = _FakeSession([(200, b"tiny"), (200, b"tiny"), (200, b"tiny")])
+        session = _FakeSession([(200, b"tiny")] * 4)
 
         result = self._run(session)
 
         # A bad body could be an anti-bot page, so it's transient, not missing.
         self.assertIs(result, main.FetchResult.ERROR)
         self.assertFalse(os.path.exists(self.filepath))
-        self.assertEqual(session.calls, 3)
+        self.assertEqual(session.calls, 4)
 
     def test_rejects_non_jpeg_payload_with_200(self):
         # An HTML error page served with HTTP 200 clears the size threshold but
         # is not a JPEG, so it must be rejected rather than saved as a .jpg.
         page = b"<html><body>Not Found</body></html>" + b" " * 1024
-        session = _FakeSession([(200, page), (200, page), (200, page)])
+        session = _FakeSession([(200, page)] * 4)
 
         result = self._run(session)
 
         self.assertIs(result, main.FetchResult.ERROR)
         self.assertFalse(os.path.exists(self.filepath))
-        self.assertEqual(session.calls, 3)
+        self.assertEqual(session.calls, 4)
 
     def test_returns_missing_on_404_without_retry(self):
         session = _FakeSession([(404, b"")])
@@ -110,6 +110,25 @@ class TryDownloadTests(unittest.TestCase):
         # Only a 404 is proof the image doesn't exist — safe to cache.
         self.assertIs(result, main.FetchResult.MISSING)
         self.assertEqual(session.calls, 1)
+
+    def test_zero_retries_means_one_initial_attempt(self):
+        session = _FakeSession([TimeoutError()])
+
+        result = self._run(session, max_retries=0)
+
+        self.assertIs(result, main.FetchResult.ERROR)
+        self.assertEqual(session.calls, 1)
+        self.sleep_mock.assert_not_awaited()
+
+    def test_rejects_oversized_response_before_saving(self):
+        session = _FakeSession(
+            [(200, _jpeg_body(), {"Content-Length": str(main.MAX_IMAGE_BYTES + 1)})]
+        )
+
+        result = self._run(session, max_retries=0)
+
+        self.assertIs(result, main.FetchResult.ERROR)
+        self.assertFalse(os.path.exists(self.filepath))
 
     def test_honors_retry_after_on_429(self):
         session = _FakeSession(
@@ -168,19 +187,13 @@ class TryDownloadTests(unittest.TestCase):
         self.assertEqual(session.calls, 2)
 
     def test_gives_up_after_max_retries(self):
-        session = _FakeSession(
-            [
-                TimeoutError(),
-                TimeoutError(),
-                TimeoutError(),
-            ]
-        )
+        session = _FakeSession([TimeoutError()] * 4)
 
         result = self._run(session)
 
         # Timeouts are transient — the card must not be cached as unavailable.
         self.assertIs(result, main.FetchResult.ERROR)
-        self.assertEqual(session.calls, 3)
+        self.assertEqual(session.calls, 4)
 
     def test_cleans_up_partial_file_when_disk_write_fails(self):
         session = _FakeSession([(200, _jpeg_body())])
@@ -249,7 +262,7 @@ class DownloadCardOutcomeTests(unittest.TestCase):
 
     def test_network_error_on_any_source_is_transient(self):
         # Direct ID 404s, but the backup times out -> must NOT be cached.
-        session = _FakeSession([(404, b""), TimeoutError()])
+        session = _FakeSession([(404, b""), TimeoutError(), TimeoutError()])
 
         stats = self._download(session, self._cfg())
 

@@ -6,7 +6,7 @@ import unittest
 
 import main
 
-VALID_JPEG = b"\xff\xd8\xff" + b"\x00" * 1024
+VALID_JPEG = b"\xff\xd8\xff" + b"\x00" * 1024 + b"\xff\xd9"
 
 
 class FindBrokenImagesTests(unittest.TestCase):

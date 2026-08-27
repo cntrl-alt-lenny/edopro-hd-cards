@@ -2,7 +2,6 @@ name: Build and Release
 
 permissions:
   contents: write
-  id-token: write
 
 on:
   push:
@@ -21,14 +20,17 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-          - os: macos-latest
+          # macos-latest is currently ARM64. Use the Intel runner so the one
+          # shipped macOS binary runs natively on Intel and through Rosetta on
+          # Apple Silicon, preserving one macOS asset per release.
+          - os: macos-latest-large
           - os: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: '3.11'
 
@@ -87,7 +89,7 @@ jobs:
             args+=(--windowed --icon build/app-icon.ico)
             args+=(--add-data "VERSION;." --add-data "assets/app-icon.png;.")
             ;;
-          macos-latest)
+          macos-latest-large)
             # PyInstaller converts the PNG to the .icns a bundle needs.
             args+=(--windowed --icon assets/app-icon.png)
             args+=(--add-data "VERSION:." --add-data "assets/app-icon.png:.")
@@ -120,7 +122,7 @@ jobs:
       run: |
         case "${{ matrix.os }}" in
           windows-latest) binary="dist/EDOPro-HD-Sync.exe" ;;
-          macos-latest)   binary="dist/EDOPro-HD-Sync.app/Contents/MacOS/EDOPro-HD-Sync" ;;
+          macos-latest-large)   binary="dist/EDOPro-HD-Sync.app/Contents/MacOS/EDOPro-HD-Sync" ;;
           *)              binary="dist/EDOPro-HD-Sync" ;;
         esac
         "$binary" --health-check --quiet
@@ -157,7 +159,7 @@ jobs:
     # zip (unlike a raw browser download) preserves the executable bit, which is
     # why the app ships inside an archive rather than as a bare file.
     - name: Package (macOS)
-      if: matrix.os == 'macos-latest'
+      if: matrix.os == 'macos-latest-large'
       shell: bash
       run: |
         version="${{ steps.release_version.outputs.value }}"
@@ -206,7 +208,7 @@ jobs:
         version="${{ steps.release_version.outputs.value }}"
         case "${{ matrix.os }}" in
           windows-latest) archive="dist/EDOPro-HD-Sync-Windows-v${version}.zip"; app="EDOPro-HD-Sync.exe" ;;
-          macos-latest)   archive="dist/EDOPro-HD-Sync-macOS-v${version}.zip";   app="EDOPro HD Sync.app" ;;
+          macos-latest-large)   archive="dist/EDOPro-HD-Sync-macOS-v${version}.zip";   app="EDOPro HD Sync.app" ;;
           *)              archive="dist/EDOPro-HD-Sync-Linux-v${version}.zip";   app="EDOPro-HD-Sync" ;;
         esac
 
@@ -229,7 +231,7 @@ jobs:
           exit 1
         fi
 
-        if [ "${{ matrix.os }}" = "macos-latest" ]; then
+        if [ "${{ matrix.os }}" = "macos-latest-large" ]; then
           exe="$root/$app/Contents/MacOS/EDOPro-HD-Sync"
           if [ ! -x "$exe" ]; then
             echo "::error::The .app bundle has no executable inside - it would not launch."
@@ -254,14 +256,14 @@ jobs:
         version="${{ steps.release_version.outputs.value }}"
         if [ "${{ matrix.os }}" = "windows-latest" ]; then
           echo "path=dist/EDOPro-HD-Sync-Windows-v${version}.zip" >> "$GITHUB_OUTPUT"
-        elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+        elif [ "${{ matrix.os }}" = "macos-latest-large" ]; then
           echo "path=dist/EDOPro-HD-Sync-macOS-v${version}.zip" >> "$GITHUB_OUTPUT"
         else
           echo "path=dist/EDOPro-HD-Sync-Linux-v${version}.zip" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Hand the zip to the release job
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: zip-${{ matrix.os }}
         path: ${{ steps.release_file.outputs.path }}
@@ -278,7 +280,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Collect every platform's zip
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         path: dist
         pattern: zip-*
@@ -302,7 +304,7 @@ jobs:
         exit "$missing"
 
     - name: Release
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       with:
         name: EDOPro HD Sync v${{ needs.build.outputs.version }}
         generate_release_notes: true
