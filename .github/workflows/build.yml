@@ -23,7 +23,7 @@ jobs:
           # macos-latest is currently ARM64. Use the Intel runner so the one
           # shipped macOS binary runs natively on Intel and through Rosetta on
           # Apple Silicon, preserving one macOS asset per release.
-          - os: macos-latest-large
+          - os: macos-15-intel
           - os: ubuntu-latest
 
     steps:
@@ -89,7 +89,7 @@ jobs:
             args+=(--windowed --icon build/app-icon.ico)
             args+=(--add-data "VERSION;." --add-data "assets/app-icon.png;.")
             ;;
-          macos-latest-large)
+          macos-15-intel)
             # PyInstaller converts the PNG to the .icns a bundle needs.
             args+=(--windowed --icon assets/app-icon.png)
             args+=(--add-data "VERSION:." --add-data "assets/app-icon.png:.")
@@ -122,7 +122,7 @@ jobs:
       run: |
         case "${{ matrix.os }}" in
           windows-latest) binary="dist/EDOPro-HD-Sync.exe" ;;
-          macos-latest-large)   binary="dist/EDOPro-HD-Sync.app/Contents/MacOS/EDOPro-HD-Sync" ;;
+          macos-15-intel)   binary="dist/EDOPro-HD-Sync.app/Contents/MacOS/EDOPro-HD-Sync" ;;
           *)              binary="dist/EDOPro-HD-Sync" ;;
         esac
         "$binary" --health-check --quiet
@@ -159,7 +159,7 @@ jobs:
     # zip (unlike a raw browser download) preserves the executable bit, which is
     # why the app ships inside an archive rather than as a bare file.
     - name: Package (macOS)
-      if: matrix.os == 'macos-latest-large'
+      if: matrix.os == 'macos-15-intel'
       shell: bash
       run: |
         version="${{ steps.release_version.outputs.value }}"
@@ -208,7 +208,7 @@ jobs:
         version="${{ steps.release_version.outputs.value }}"
         case "${{ matrix.os }}" in
           windows-latest) archive="dist/EDOPro-HD-Sync-Windows-v${version}.zip"; app="EDOPro-HD-Sync.exe" ;;
-          macos-latest-large)   archive="dist/EDOPro-HD-Sync-macOS-v${version}.zip";   app="EDOPro HD Sync.app" ;;
+          macos-15-intel)   archive="dist/EDOPro-HD-Sync-macOS-v${version}.zip";   app="EDOPro HD Sync.app" ;;
           *)              archive="dist/EDOPro-HD-Sync-Linux-v${version}.zip";   app="EDOPro-HD-Sync" ;;
         esac
 
@@ -231,7 +231,7 @@ jobs:
           exit 1
         fi
 
-        if [ "${{ matrix.os }}" = "macos-latest-large" ]; then
+        if [ "${{ matrix.os }}" = "macos-15-intel" ]; then
           exe="$root/$app/Contents/MacOS/EDOPro-HD-Sync"
           if [ ! -x "$exe" ]; then
             echo "::error::The .app bundle has no executable inside - it would not launch."
@@ -256,7 +256,7 @@ jobs:
         version="${{ steps.release_version.outputs.value }}"
         if [ "${{ matrix.os }}" = "windows-latest" ]; then
           echo "path=dist/EDOPro-HD-Sync-Windows-v${version}.zip" >> "$GITHUB_OUTPUT"
-        elif [ "${{ matrix.os }}" = "macos-latest-large" ]; then
+        elif [ "${{ matrix.os }}" = "macos-15-intel" ]; then
           echo "path=dist/EDOPro-HD-Sync-macOS-v${version}.zip" >> "$GITHUB_OUTPUT"
         else
           echo "path=dist/EDOPro-HD-Sync-Linux-v${version}.zip" >> "$GITHUB_OUTPUT"
