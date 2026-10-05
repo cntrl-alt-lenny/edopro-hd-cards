@@ -222,7 +222,6 @@ class DownloadCardTests(unittest.TestCase):
         self.assertEqual(
             attempted_urls,
             [
-                f"{self.cfg.sources['official']}/46986424.jpg",
                 f"{self.cfg.sources['official']}/46986414.jpg",
             ],
         )
@@ -260,7 +259,6 @@ class DownloadCardTests(unittest.TestCase):
         self.assertEqual(
             attempted_urls,
             [
-                f"{self.cfg.sources['official']}/46986424.jpg",
                 f"{self.cfg.sources['official']}/46986414.jpg",
             ],
         )

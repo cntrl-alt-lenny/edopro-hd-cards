@@ -743,6 +743,7 @@ class DownloadStats:
     """Counters for the current sync run."""
 
     def __init__(self, rush_ids: set[int] | None = None):
+        self.success_ids: set[int] = set()
         self.ok_hd = 0
         self.ok_mapped = 0
         self.ok_fallback = 0
@@ -816,6 +817,7 @@ class DownloadStats:
         ]
 
     def record_success(self, card_id: int, counter_name: str) -> None:
+        self.success_ids.add(card_id)
         setattr(self, counter_name, getattr(self, counter_name) + 1)
         if card_id < 100_000_000:
             self.official_ok += 1
@@ -1062,9 +1064,8 @@ def build_download_candidates(
     Two orderings, and the difference only ever applies to GOAT/Pre-Errata
     entries:
 
-    Normally the sharpest image wins. Those entries usually have no artwork of
-    their own on YGOProDeck, so they borrow the base card's HD art - that is
-    what makes 200-odd of them look as sharp as everything else.
+    Normally the base card's HD artwork wins over an era entry's own image,
+    which may exist on YGOProDeck at a lower resolution.
 
     With original_text on, the card's own artwork comes first instead. The
     whole point of a Pre-Errata entry is the wording it was printed with, and
@@ -1095,11 +1096,11 @@ def build_download_candidates(
     if original_text and (is_suffix_match or is_pre_errata_miss):
         return own + substitutes
 
-    # Default: the pinned override, the card's own ID on the big CDN, the
-    # stand-ins, and the small community server last of all.
+    # Default: pinned/base HD art first, then the era ID on the big CDN,
+    # and the small community server last of all.
     manual = [c for c in substitutes if c[0] == "manual-map"]
     rest = [c for c in substitutes if c[0] != "manual-map"]
-    return manual + own[:1] + rest + own[1:]
+    return manual + rest + own
 
 
 def is_era_entry(name: str, suffixes: list[str]) -> bool:
@@ -1123,7 +1124,11 @@ async def download_card(
     """Download a single card image using a simple waterfall."""
     filepath = os.path.join(cfg.pics_path, f"{card_id}.jpg")
 
-    if not cfg.force and os.path.exists(filepath):
+    if (
+        not cfg.force
+        and card_id not in getattr(cfg, "refresh_era_ids", set())
+        and os.path.exists(filepath)
+    ):
         stats.skipped += 1
         if progress and task_id is not None:
             progress.advance(task_id)
@@ -1638,18 +1643,6 @@ def _should_show_gui(cfg: Config) -> bool:
     return cfg.textures is None and not cfg.textures_pack
 
 
-def _should_refresh_era_art(cfg: Config) -> bool:
-    """True when the GOAT/Pre-Errata artwork setting has been flipped.
-
-    Those cards already have an image, so nothing would change without
-    re-fetching them. --force already re-downloads everything, and a dry run
-    must never delete anything.
-    """
-    if cfg.dry_run or cfg.force:
-        return False
-    return bool(cfg.original_text) != bool(cfg.saved_original_text)
-
-
 def _run_was_cancelled(cfg: Config) -> bool:
     """True when the window's Cancel button stopped this run part-way."""
     return cfg.cancel_event is not None and cfg.cancel_event.is_set()
@@ -1658,7 +1651,11 @@ def _run_was_cancelled(cfg: Config) -> bool:
 def _apply_gui_choices(cfg: Config, choices: dict) -> None:
     """Copy the window's tick-boxes onto the config and mute console questions."""
     cfg.field_art = bool(choices.get("field_art", cfg.field_art))
-    cfg.original_text = bool(choices.get("original_text", cfg.original_text))
+    cfg.original_text = (
+        not bool(choices["hd_era_art"])
+        if "hd_era_art" in choices
+        else bool(choices.get("original_text", cfg.original_text))
+    )
     cfg.my_decks = bool(choices.get("my_decks", False))
     cfg.textures = bool(choices.get("textures", False))
     cfg.repair = bool(choices.get("repair", False))
@@ -1914,22 +1911,27 @@ async def run(cfg: Config):
         else:
             console.print("[dim]Repair: no broken images found.[/dim]")
 
-    # Flipping "original artwork" changes which image these cards should have,
-    # and they already have one, so nothing would happen without a nudge.
-    # Re-fetch just those few hundred rather than the whole collection.
-    if _should_refresh_era_art(cfg):
-        era_ids = [cid for cid, nm in id_to_name.items() if is_era_entry(nm, cfg.suffixes)]
-        for cid in era_ids:
-            _remove_quietly(os.path.join(cfg.pics_path, f"{cid}.jpg"))
+    # Track the applied policy per folder and card, so partial/deck runs and
+    # failed downloads do not mark untouched artwork as upgraded.
+    era_policy = "original-v1" if cfg.original_text else "hd-v2"
+    era_folder = os.path.normcase(os.path.abspath(cfg.edopro_path))
+    applied = cfg.era_art_applied.get(era_folder, {})
+    if not isinstance(applied, dict):
+        applied = {}
+    cfg.refresh_era_ids = {
+        cid
+        for cid, name in id_to_name.items()
+        if is_era_entry(name, cfg.suffixes) and applied.get(str(cid)) != era_policy
+    }
+    if cfg.refresh_era_ids and not cfg.dry_run:
+        for cid in cfg.refresh_era_ids:
             failure_cache.pop(cid, None)
-        if era_ids:
-            wording = "original" if cfg.original_text else "sharpest available"
-            console.print(
-                f"[yellow]Artwork setting changed to {wording} — refreshing "
-                f"{len(era_ids):,} GOAT/Pre-Errata card(s).[/yellow]"
-            )
-            if cfg.notice_sink is not None:
-                cfg.notice_sink(f"Refreshing {len(era_ids):,} GOAT/Pre-Errata cards")
+        console.print(
+            f"[yellow]Refreshing {len(cfg.refresh_era_ids):,} GOAT/Pre-Errata "
+            f"card(s) with {'original wording' if cfg.original_text else 'HD artwork'}.[/yellow]"
+        )
+        if cfg.notice_sink is not None:
+            cfg.notice_sink(f"Refreshing {len(cfg.refresh_era_ids):,} GOAT/Pre-Errata cards")
 
     if cfg.force:
         missing_ids = list(id_to_name.keys())
@@ -1937,7 +1939,9 @@ async def run(cfg: Config):
         missing_ids = []
         skipped_by_cache = 0
         for card_id in id_to_name:
-            if os.path.exists(os.path.join(cfg.pics_path, f"{card_id}.jpg")):
+            if card_id not in cfg.refresh_era_ids and os.path.exists(
+                os.path.join(cfg.pics_path, f"{card_id}.jpg")
+            ):
                 continue
             if card_id in failure_cache:
                 skipped_by_cache += 1
@@ -2201,6 +2205,13 @@ async def run(cfg: Config):
             if os.path.exists(os.path.join(cfg.pics_path, f"{cid}.jpg")):
                 del failure_cache[cid]
         save_failure_cache(failure_cache_path, failure_cache)
+
+    if not cfg.dry_run:
+        for cid in cfg.refresh_era_ids & stats.success_ids:
+            applied[str(cid)] = era_policy
+        if applied:
+            cfg.era_art_applied[era_folder] = applied
+            config_module.save_setting(cfg.config_path, "era_art_applied", cfg.era_art_applied)
 
     # Only once the refresh has actually run: recording it after a cancelled
     # run would strand the cards it never got to with no image at all.

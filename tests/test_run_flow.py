@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -124,6 +125,65 @@ class RunFlowTests(unittest.TestCase):
         attempted = [call.args[2] for call in downloads.await_args_list]
         self.assertTrue(any("111" in path for path in attempted))
         self.assertFalse(any("999" in path for path in attempted))
+
+    def test_era_upgrade_refreshes_existing_image_once(self):
+        path = os.path.join(self.pics, "511000818.jpg")
+        with open(path, "wb") as f:
+            f.write(b"old low resolution")
+        cards = {511000818: "Sinister Serpent (Pre-Errata)"}
+        first = self._run(self._cfg(), cards, {511000818: main.FetchResult.OK})
+        self.assertTrue(first.await_count)
+        with open(self.config_path, encoding="utf-8") as f:
+            applied = json.load(f)["era_art_applied"]
+        folder = os.path.normcase(os.path.abspath(self.root))
+        self.assertEqual(applied[folder], {"511000818": "hd-v2"})
+        second = self._run(self._cfg(), cards, {})
+        self.assertEqual(second.await_count, 0)
+        switched = self._run(self._cfg("--original-text"), cards, {511000818: main.FetchResult.OK})
+        self.assertTrue(switched.await_count)
+
+    def test_failed_era_upgrade_preserves_existing_image_and_retries(self):
+        path = os.path.join(self.pics, "511000818.jpg")
+        with open(path, "wb") as f:
+            f.write(b"old image")
+        cards = {511000818: "Sinister Serpent (Pre-Errata)"}
+        self._run(self._cfg(), cards, {511000818: main.FetchResult.ERROR})
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), b"old image")
+        retry = self._run(self._cfg(), cards, {511000818: main.FetchResult.OK})
+        self.assertTrue(retry.await_count)
+
+    def test_deck_upgrade_leaves_other_era_cards_pending(self):
+        cards = {111: "First (Pre-Errata)", 222: "Second (Pre-Errata)"}
+        for cid in cards:
+            with open(os.path.join(self.pics, f"{cid}.jpg"), "wb") as f:
+                f.write(b"old image")
+        deck = os.path.join(self.root, "mine.ydk")
+        with open(deck, "w", encoding="utf-8") as f:
+            f.write("#main\n111\n")
+        self._run(self._cfg("--deck", deck), cards, {111: main.FetchResult.OK})
+        next_run = self._run(self._cfg(), cards, {222: main.FetchResult.OK})
+        paths = {os.path.basename(call.args[2]) for call in next_run.await_args_list}
+        self.assertEqual(paths, {"222.jpg"})
+
+    def test_cancelled_era_refresh_does_not_mark_cards_applied(self):
+        cfg = self._cfg()
+        cfg.cancel_event = threading.Event()
+        cfg.cancel_event.set()
+        cards = {111: "First (Pre-Errata)"}
+        self._run(cfg, cards, {111: main.FetchResult.OK})
+        self.assertEqual(cfg.era_art_applied, {})
+        retry = self._run(self._cfg(), cards, {111: main.FetchResult.OK})
+        self.assertTrue(retry.await_count)
+
+    def test_dry_run_leaves_era_image_and_policy_untouched(self):
+        path = os.path.join(self.pics, "111.jpg")
+        with open(path, "wb") as f:
+            f.write(b"old image")
+        self._run(self._cfg("--dry-run"), {111: "First (Pre-Errata)"}, {})
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), b"old image")
+        self.assertFalse(os.path.exists(self.config_path))
 
     def test_explicit_empty_deck_filter_errors_out(self):
         """A typo'd --deck must not silently escalate into a full 13k-card sync."""

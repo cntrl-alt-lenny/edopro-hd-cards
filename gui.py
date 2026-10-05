@@ -64,10 +64,10 @@ CHECKBOX_GROUPS = [
                 False,
             ),
             (
-                "original_text",
-                "Original GOAT / Pre-Errata wording",
-                "Era-correct text on those cards, but a lower-resolution image",
-                False,
+                "hd_era_art",
+                "HD GOAT / Pre-Errata artwork",
+                "Modern text in HD; untick for original wording at lower resolution",
+                True,
             ),
         ],
     ),
@@ -513,7 +513,7 @@ class _App:
         self.variables: dict[str, tk.BooleanVar] = {}
         defaults = {
             "field_art": getattr(self.cfg, "field_art", True),
-            "original_text": getattr(self.cfg, "original_text", False),
+            "hd_era_art": not getattr(self.cfg, "original_text", False),
             "my_decks": _recommended_my_decks(self.cfg),
         }
         for section, boxes in CHECKBOX_GROUPS:
@@ -526,7 +526,7 @@ class _App:
                 ttk.Checkbutton(
                     card, text=label, style="Card.TCheckbutton", variable=self.variables[key]
                 ).grid(sticky="w")
-                ttk.Label(card, text=hint, style="Hint.TLabel").grid(
+                ttk.Label(card, text=hint, style="Hint.TLabel", wraplength=390).grid(
                     sticky="w", padx=(28, 0), pady=(0, 8)
                 )
 

@@ -646,6 +646,9 @@ class Config:
             file_cfg.get("original_text", DEFAULTS["original_text"]),
             DEFAULTS["original_text"],
         )
+        applied = file_cfg.get("era_art_applied", {})
+        self.era_art_applied: dict = applied if isinstance(applied, dict) else {}
+        self.refresh_era_ids: set[int] = set()
         self.stats: bool = self.cli.stats
         self.no_pause: bool = self.cli.no_pause
         self.health_check: bool = self.cli.health_check

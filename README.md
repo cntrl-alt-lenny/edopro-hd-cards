@@ -43,7 +43,7 @@ One download per platform on the [Releases page](https://github.com/cntrl-alt-le
 - **One simple window** — tick what you want, press Start, and watch the live progress and results right in the window. Same experience on Windows, macOS, and Linux.
 - **Every card type covered** — official, Rush Duel, and anime/custom cards are all fetched directly by the same IDs EDOPro uses.
 - **Field Spell playmat art** — the cropped artwork EDOPro displays on the board is downloaded into `pics/field/` automatically.
-- **GOAT / Pre-Errata wording** — those entries normally borrow the base card's HD art, which carries the *errata'd* text. Tick *Original GOAT / Pre-Errata wording* (or `--original-text`) to use each card's own image instead: the wording it was actually printed with, at the lower resolution that's all that exists for it.
+- **GOAT / Pre-Errata artwork choice** ? *HD GOAT / Pre-Errata artwork* is on by default and uses the base card's sharp artwork with modern, errata'd text. Untick it (or use `--original-text`) for the card's own original wording at lower resolution. Changing the choice refreshes affected cards; upgrading also refreshes previously downloaded era artwork, keeping existing images until replacements succeed.
 - **Deck-first sync** — tick *Only cards from my decks* (or use `--my-decks`) and a fresh install is playable in minutes instead of hours.
 - **Coverage at a glance** — the *Show coverage* button (or `--stats`) tells you how complete your artwork is without downloading a thing.
 - **Repair mode** — tick *Repair broken images* (or use `--repair`) to find and re-fetch corrupt or half-downloaded files.

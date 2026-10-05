@@ -82,6 +82,15 @@ class ApplyGuiChoicesTests(unittest.TestCase):
         self.assertTrue(cfg.save_report)
         self.assertFalse(cfg.interactive_prompts)
 
+    def test_hd_toggle_defaults_on_and_off_selects_original_wording(self):
+        checkbox = next(box for box in gui.CHECKBOXES if box[0] == "hd_era_art")
+        self.assertTrue(checkbox[3])
+        cfg = _cfg()
+        main._apply_gui_choices(cfg, {"hd_era_art": False})
+        self.assertTrue(cfg.original_text)
+        main._apply_gui_choices(cfg, {"hd_era_art": True})
+        self.assertFalse(cfg.original_text)
+
     def test_show_coverage_button_maps_to_stats(self):
         cfg = _cfg()
         main._apply_gui_choices(cfg, {"stats": True})
