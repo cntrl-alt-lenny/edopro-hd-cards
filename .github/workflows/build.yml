@@ -173,7 +173,7 @@ jobs:
         # Editing Info.plist invalidates PyInstaller's existing signature.
         plist="$app/Contents/Info.plist"
         /usr/libexec/PlistBuddy -c "Set :CFBundleName EDOPro HD Sync" "$plist"
-        /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string EDOPro HD Sync" "$plist"
+        plutil -replace CFBundleDisplayName -string "EDOPro HD Sync" "$plist"
         /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${version}" "$plist"
         codesign --force --sign - "$app"
         ditto -c -k --keepParent "$app" "dist/$archive"
