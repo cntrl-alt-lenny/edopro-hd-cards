@@ -94,7 +94,7 @@ jobs:
             ;;
           macos-15)
             # PyInstaller converts the PNG to the .icns a bundle needs.
-            args+=(--windowed --target-architecture universal2 --icon assets/app-icon.png
+            args+=(--windowed --target-architecture universal2 --exclude-module PIL --icon assets/app-icon.png
                    --osx-bundle-identifier com.cntrl-alt-lenny.edopro-hd-sync)
             args+=(--add-data "VERSION:." --add-data "assets/app-icon.png:." --add-data "assets/extras:assets/extras")
             ;;
