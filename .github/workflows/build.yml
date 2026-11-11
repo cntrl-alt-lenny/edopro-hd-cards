@@ -20,36 +20,56 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-          # macos-latest is currently ARM64. Use the Intel runner so the one
-          # shipped macOS binary runs natively on Intel and through Rosetta on
-          # Apple Silicon, preserving one macOS asset per release.
-          - os: macos-15-intel
+          - os: macos-15
           - os: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v7
 
     - name: Set up Python
+      if: runner.os != 'macOS'
       uses: actions/setup-python@v7
       with:
         python-version: '3.11'
+
+    - name: Set up universal2 Python on macOS
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        curl --fail --silent --show-error --location \
+          https://www.python.org/ftp/python/3.13.13/python-3.13.13-macos11.pkg \
+          --output "$RUNNER_TEMP/python.pkg"
+        echo "a909cb655af5db67d5a90b3603437a1d58bec3446d624e4034e278ac62023cc9  $RUNNER_TEMP/python.pkg" \
+          | shasum -a 256 -c
+        sudo installer -pkg "$RUNNER_TEMP/python.pkg" -target /
+        mkdir -p "$RUNNER_TEMP/universal-python"
+        ln -s /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 \
+          "$RUNNER_TEMP/universal-python/python"
+        echo "$RUNNER_TEMP/universal-python" >> "$GITHUB_PATH"
 
     - name: Determine release version
       id: release_version
       shell: bash
       run: |
-        version="${GITHUB_REF_NAME#v}"
-        if [ "${GITHUB_REF_TYPE}" != "tag" ] || [ -z "${version}" ] || [ "${version}" = "${GITHUB_REF_NAME}" ]; then
-          version="dev"
+        version="$(tr -d '\r\n' < VERSION)"
+        if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+          echo "::error::Release tag must match VERSION ($version)."
+          exit 1
         fi
-        echo "value=${version}" >> "$GITHUB_OUTPUT"
-        printf '%s\n' "${version}" > VERSION
+        echo "value=$version" >> "$GITHUB_OUTPUT"
 
     - name: Install Dependencies
       shell: bash
       run: |
-        pip install -r requirements.txt
-        pip install pyinstaller==6.20.0 pillow==12.2.0
+        if [ "$RUNNER_OS" = "macOS" ]; then
+          # PyPI's default wheels for these packages carry only the current CPU.
+          ARCHFLAGS="-arch arm64 -arch x86_64" MACOSX_DEPLOYMENT_TARGET=11.0 \
+            python -m pip install --no-cache-dir --no-binary aiohttp,frozenlist,multidict,propcache,yarl \
+            -r requirements.txt
+        else
+          python -m pip install -r requirements.txt
+        fi
+        python -m pip install pyinstaller==6.20.0 pillow==12.2.0
 
     # The options window needs Tk bundled on every platform — fail loudly here
     # rather than shipping a binary that silently falls back to console mode.
@@ -61,25 +81,8 @@ jobs:
       shell: bash
       run: python tools/build_icon.py
 
-    # --onefile, so the download unzips to exactly one runnable file plus the
-    # ReadMe. It costs ~1.5s of extraction per launch versus --onedir; that is
-    # the price of not making people hunt for an app inside a folder of 1,000
-    # support files, and this tool is run occasionally, not all day.
-    #
-    # --windowed on Windows ONLY. A console build puts a black console window
-    # behind the app on every double-click, which users reported as looking
-    # broken. Do not "fix" that at runtime by hiding the window: that was
-    # tried and it does not hold, because the console Explorer creates on a
-    # double-click is not the same beast as the pseudo-console a terminal
-    # hands you, so it cannot be tested from one. Not creating a console at
-    # all is the only version of this that cannot regress. Output still
-    # reaches a pipe or a terminal, which is what the smoke test below and
-    # `--health-check` rely on. On macOS --windowed would build a .app bundle
-    # instead of the single file the release needs, so it stays Windows-only.
-    # --windowed does two different jobs. On Windows it builds a GUI subsystem
-    # exe so no console window appears. On macOS it wraps the same one-file
-    # binary in a .app bundle - the only way a double-click opens the app
-    # instead of a Terminal window running a Unix executable.
+    # Keep one executable. A .app bundle is required for Finder to open it
+    # without Terminal. On Windows --windowed selects the GUI PE subsystem.
     - name: Build with PyInstaller
       shell: bash
       run: |
@@ -87,19 +90,20 @@ jobs:
         case "${{ matrix.os }}" in
           windows-latest)
             args+=(--windowed --icon build/app-icon.ico)
-            args+=(--add-data "VERSION;." --add-data "assets/app-icon.png;.")
+            args+=(--add-data "VERSION;." --add-data "assets/app-icon.png;." --add-data "assets/extras;assets/extras")
             ;;
-          macos-15-intel)
+          macos-15)
             # PyInstaller converts the PNG to the .icns a bundle needs.
-            args+=(--windowed --icon assets/app-icon.png)
-            args+=(--add-data "VERSION:." --add-data "assets/app-icon.png:.")
+            args+=(--windowed --target-architecture universal2 --icon assets/app-icon.png
+                   --osx-bundle-identifier com.cntrl-alt-lenny.edopro-hd-sync)
+            args+=(--add-data "VERSION:." --add-data "assets/app-icon.png:." --add-data "assets/extras:assets/extras")
             ;;
           *)
             args+=(--icon build/app-icon.ico)
-            args+=(--add-data "VERSION:." --add-data "assets/app-icon.png:.")
+            args+=(--add-data "VERSION:." --add-data "assets/app-icon.png:." --add-data "assets/extras:assets/extras")
             ;;
         esac
-        pyinstaller "${args[@]}" main.py
+        python -m PyInstaller "${args[@]}" main.py
 
     # The PE subsystem byte is the difference between "double-click shows one
     # clean window" and "double-click shows a stray black console too".
@@ -122,7 +126,7 @@ jobs:
       run: |
         case "${{ matrix.os }}" in
           windows-latest) binary="dist/EDOPro-HD-Sync.exe" ;;
-          macos-15-intel)   binary="dist/EDOPro-HD-Sync.app/Contents/MacOS/EDOPro-HD-Sync" ;;
+          macos-15)   binary="dist/EDOPro-HD-Sync.app/Contents/MacOS/EDOPro-HD-Sync" ;;
           *)              binary="dist/EDOPro-HD-Sync" ;;
         esac
         "$binary" --health-check --quiet
@@ -140,8 +144,7 @@ jobs:
       shell: bash
       run: echo "::warning::This Windows build is unsigned - SmartScreen may warn users. Configure Azure Trusted Signing to remove the warning."
 
-    # Every zip holds exactly two things: the app and a ReadMe. Nothing to
-    # install, nothing to dig through.
+    # Windows and Linux include a ReadMe beside the executable.
     - name: Package (Windows)
       if: matrix.os == 'windows-latest'
       shell: pwsh
@@ -159,29 +162,21 @@ jobs:
     # zip (unlike a raw browser download) preserves the executable bit, which is
     # why the app ships inside an archive rather than as a bare file.
     - name: Package (macOS)
-      if: matrix.os == 'macos-15-intel'
+      if: matrix.os == 'macos-15'
       shell: bash
       run: |
         version="${{ steps.release_version.outputs.value }}"
         archive="EDOPro-HD-Sync-macOS-v${version}.zip"
-        bundleDir="dist/EDOPro HD Sync"
+        app="dist/EDOPro HD Sync.app"
+        mv dist/EDOPro-HD-Sync.app "$app"
 
-        rm -rf "$bundleDir" "dist/$archive"
-        mkdir -p "$bundleDir"
-
-        mv dist/EDOPro-HD-Sync.app "$bundleDir/EDOPro HD Sync.app"
-        chmod +x "$bundleDir/EDOPro HD Sync.app/Contents/MacOS/EDOPro-HD-Sync"
-
-        # Finder and the menu bar should read "EDOPro HD Sync", not the file name.
-        plist="$bundleDir/EDOPro HD Sync.app/Contents/Info.plist"
-        /usr/libexec/PlistBuddy -c "Set :CFBundleName EDOPro HD Sync" "$plist" 2>/dev/null || true
-        /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName EDOPro HD Sync" "$plist" 2>/dev/null \
-          || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string EDOPro HD Sync" "$plist" 2>/dev/null || true
-
-        cp release_assets/ReadMe-MacOS.txt "$bundleDir/ReadMe.txt"
-
-        # -y keeps symlinks as symlinks so the bundle survives the round trip.
-        cd dist && zip -ry "$archive" "EDOPro HD Sync"
+        # Editing Info.plist invalidates PyInstaller's existing signature.
+        plist="$app/Contents/Info.plist"
+        /usr/libexec/PlistBuddy -c "Set :CFBundleName EDOPro HD Sync" "$plist"
+        /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string EDOPro HD Sync" "$plist"
+        /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${version}" "$plist"
+        codesign --force --sign - "$app"
+        ditto -c -k --keepParent "$app" "dist/$archive"
 
     - name: Package (Linux)
       if: matrix.os == 'ubuntu-latest'
@@ -200,54 +195,38 @@ jobs:
 
         cd dist && zip -r "$archive" "EDOPro HD Sync"
 
-    # The whole promise of the download is "unzip, double-click". Fail the
-    # build if a zip ever grows a third entry or loses its executable bit.
-    - name: Verify the zip is just the app and a ReadMe
+    - name: Verify the released zip after extraction
       shell: bash
       run: |
         version="${{ steps.release_version.outputs.value }}"
         case "${{ matrix.os }}" in
           windows-latest) archive="dist/EDOPro-HD-Sync-Windows-v${version}.zip"; app="EDOPro-HD-Sync.exe" ;;
-          macos-15-intel)   archive="dist/EDOPro-HD-Sync-macOS-v${version}.zip";   app="EDOPro HD Sync.app" ;;
+          macos-15)   archive="dist/EDOPro-HD-Sync-macOS-v${version}.zip";   app="EDOPro HD Sync.app" ;;
           *)              archive="dist/EDOPro-HD-Sync-Linux-v${version}.zip";   app="EDOPro-HD-Sync" ;;
         esac
 
         rm -rf dist/_verify && mkdir -p dist/_verify
-        unzip -q "$archive" -d dist/_verify
-        root="dist/_verify/EDOPro HD Sync"
-
-        # What the user sees on unzipping: the app and a ReadMe, nothing else.
-        # On macOS the app is a .app bundle, which Finder shows as one icon.
-        entries="$(cd "$root" && ls -1 | sort)"
-        count="$(printf '%s\n' "$entries" | wc -l | tr -d ' ')"
-        if [ "$count" != "2" ]; then
-          echo "::error::Expected 2 items in the zip (the app and ReadMe.txt), found ${count}:"
-          printf '%s\n' "$entries"
-          exit 1
-        fi
-        if [ ! -e "$root/$app" ] || [ ! -f "$root/ReadMe.txt" ]; then
-          echo "::error::The zip does not contain the app and ReadMe.txt at the top level:"
-          printf '%s\n' "$entries"
-          exit 1
-        fi
-
-        if [ "${{ matrix.os }}" = "macos-15-intel" ]; then
-          exe="$root/$app/Contents/MacOS/EDOPro-HD-Sync"
-          if [ ! -x "$exe" ]; then
-            echo "::error::The .app bundle has no executable inside - it would not launch."
-            exit 1
+        if [ "$RUNNER_OS" = "macOS" ]; then
+          ditto -x -k "$archive" dist/_verify
+          test "$(ls -1 dist/_verify)" = "$app"
+          bundle="dist/_verify/$app"
+          exe="$bundle/Contents/MacOS/EDOPro-HD-Sync"
+          test -x "$exe"
+          test -f "$bundle/Contents/Info.plist"
+          codesign --verify --deep --strict --all-architectures "$bundle"
+          lipo -verify_arch arm64 x86_64 "$exe"
+          arch -arm64 "$exe" --health-check --quiet
+          arch -x86_64 "$exe" --health-check --quiet
+        else
+          unzip -q "$archive" -d dist/_verify
+          root="dist/_verify/EDOPro HD Sync"
+          test "$(ls -1 "$root" | wc -l | tr -d ' ')" = 2
+          test -f "$root/ReadMe.txt"
+          test -f "$root/$app"
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            test -x "$root/$app"
           fi
-          # A bare Unix executable makes Finder open Terminal to run it. Only a
-          # bundle avoids that, so prove we actually shipped one.
-          if [ ! -f "$root/$app/Contents/Info.plist" ]; then
-            echo "::error::macOS app is not a real .app bundle - double-clicking it would open a Terminal window."
-            exit 1
-          fi
-        elif [ "${{ matrix.os }}" != "windows-latest" ] && [ ! -x "$root/$app" ]; then
-          echo "::error::The app is not executable inside the zip - users would get a permissions error."
-          exit 1
         fi
-        echo "Zip contains exactly the app and ReadMe.txt."
 
     - name: Determine release file
       id: release_file
@@ -256,7 +235,7 @@ jobs:
         version="${{ steps.release_version.outputs.value }}"
         if [ "${{ matrix.os }}" = "windows-latest" ]; then
           echo "path=dist/EDOPro-HD-Sync-Windows-v${version}.zip" >> "$GITHUB_OUTPUT"
-        elif [ "${{ matrix.os }}" = "macos-15-intel" ]; then
+        elif [ "${{ matrix.os }}" = "macos-15" ]; then
           echo "path=dist/EDOPro-HD-Sync-macOS-v${version}.zip" >> "$GITHUB_OUTPUT"
         else
           echo "path=dist/EDOPro-HD-Sync-Linux-v${version}.zip" >> "$GITHUB_OUTPUT"

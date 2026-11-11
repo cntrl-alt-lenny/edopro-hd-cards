@@ -215,6 +215,7 @@ def looks_like_edopro_folder(path: str) -> bool:
     return any(
         (
             os.path.isfile(os.path.join(path, "EDOPro.exe")),
+            os.path.isfile(os.path.join(path, "EDOPro.app", "Contents", "Info.plist")),
             os.path.isfile(os.path.join(path, "cards.cdb")),
             os.path.isdir(os.path.join(path, "expansions")),
             os.path.isdir(os.path.join(path, "repositories")),
@@ -283,7 +284,7 @@ def _search_parents() -> list[str]:
             if value:
                 parents.extend((value, os.path.join(value, "Programs")))
     elif sys.platform == "darwin":
-        parents.append("/Applications")
+        parents.extend(("/Applications", os.path.join(home, "Library", "Application Support")))
     else:
         parents.extend(
             (
@@ -668,6 +669,9 @@ class Config:
         self.coverage_sink = None  # callable(dict) renders coverage in the window
         self.notice_sink = None  # callable(str) for update nags & stage messages
         self.cancel_event = None  # threading.Event; workers stop when it's set
+        self.theme = False
+        self.audio = False
+        self.installed_extras: list[str] = []
         self.prune: bool = self.cli.prune
         self.repair: bool = self.cli.repair
 

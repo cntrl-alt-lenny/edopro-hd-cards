@@ -27,6 +27,7 @@ import aiohttp
 import certifi
 
 import config as config_module
+import extras
 import gui
 from config import BUILTIN_MANUAL_MAP, DEFAULTS, Config, find_edopro_folder
 
@@ -1658,6 +1659,9 @@ def _apply_gui_choices(cfg: Config, choices: dict) -> None:
     )
     cfg.my_decks = bool(choices.get("my_decks", False))
     cfg.textures = bool(choices.get("textures", False))
+    cfg.theme = bool(choices.get("theme", False))
+    cfg.audio = bool(choices.get("audio", False))
+    cfg.installed_extras = []
     cfg.repair = bool(choices.get("repair", False))
     cfg.force = bool(choices.get("force", False))
     cfg.save_report = bool(choices.get("save_report", False))
@@ -1822,6 +1826,17 @@ async def run(cfg: Config):
     if cfg.stats:
         print_coverage_stats(cfg, full_id_to_name, field_ids)
         return None
+
+    if not cfg.dry_run:
+        for selected, group, label in (
+            (cfg.theme, "textures", "Midnight Circuit theme"),
+            (cfg.audio, "sound", "Synth music and cues"),
+        ):
+            if selected and not _run_was_cancelled(cfg):
+                if cfg.notice_sink is not None:
+                    cfg.notice_sink(f"Installing {label}…")
+                extras.install(cfg.edopro_path, cfg.config_path, group)
+                cfg.installed_extras.append(label)
 
     # "Only my decks" (tick-box or --my-decks) points the deck filter at
     # EDOPro's own deck folder.

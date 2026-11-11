@@ -12,13 +12,13 @@ The owner is a non-programmer. Keep explanations plain and avoid jargon. Prefer 
 - `EDOPro-HD-Sync-macOS-vVERSION.zip`
 - `EDOPro-HD-Sync-Linux-vVERSION.zip`
 
-**Each zip contains exactly two files: the app and a platform-specific `ReadMe.txt`.** That is the whole promise of the download — unzip, double-click, done. `build.yml` fails the build if a zip ever grows a third entry, loses either file, or ships a non-executable app. Nothing is installed and no support folder is created beside the download; small settings, retry caches, and optional reports use the normal per-user application-data directory for the platform.
+**The macOS zip contains only the app. The Windows and Linux zips contain the app and a platform-specific `ReadMe.txt`.** That is the whole promise of the download — unzip, double-click, done. `build.yml` fails the build if a zip ever grows a third entry, loses either file, or ships a non-executable app. Nothing is installed and no support folder is created beside the download; small settings, retry caches, and optional reports use the normal per-user application-data directory for the platform.
 
 **The Windows build must stay `--windowed`, and `build.yml` checks the PE subsystem byte to prove it.** A console build shows a stray black console window behind the app on every double-click. Do **not** try to fix that at runtime by hiding the console: that was tried and it does not hold. The console Explorer creates for a double-click is not the same object as the pseudo-console a terminal hands a child process, so the fix cannot be verified from any terminal — it looked like it worked in testing and still shipped the bug. Not creating a console at all is the only version that cannot regress. Output still reaches an inherited pipe or terminal, so `--health-check` and the CI smoke test are unaffected. On macOS `--windowed` is what *produces* the `.app` bundle, so it is required there too (see the macOS packaging rule above).
 
 Related: `should_pause_before_exit()` requires an interactive `sys.stdin`. A windowed double-click has no console, so pausing for Enter there would hang the app on input nobody can see.
 
-**Windows and Linux ship a bare executable; macOS ships a `.app` bundle.** A zip preserves the executable bit (a browser download does not — mode 644 caused the "you do not have appropriate access privileges" bug in v5.0.0), so a raw binary double-clicks fine on Windows and Linux. **macOS is different: Finder runs a bare Unix executable by opening Terminal**, so v5.2.0 put a blue Terminal window behind the app on every launch. A `.app` bundle is the only fix — verified locally, bare executable opens Terminal, bundle does not. The bundle is still *one icon* in Finder, so the two-items-in-the-zip promise holds, and it is not a launcher script: the bundle's executable is the same one-file PyInstaller binary. `build.yml` fails the build if the macOS zip does not contain a real bundle (`Contents/Info.plist`). Keep `.zip` (not `.7z`) for native unzip support.
+**Windows and Linux ship a bare executable; macOS ships a `.app` bundle.** A zip preserves the executable bit (a browser download does not — mode 644 caused the "you do not have appropriate access privileges" bug in v5.0.0), so a raw binary double-clicks fine on Windows and Linux. **macOS is different: Finder runs a bare Unix executable by opening Terminal**, so v5.2.0 put a blue Terminal window behind the app on every launch. A `.app` bundle is the only fix — verified locally, bare executable opens Terminal, bundle does not. The bundle is still *one icon* in Finder, so the download remains a single app, and it is not a launcher script: the bundle's executable is the same one-file PyInstaller binary. `build.yml` fails the build if the macOS zip does not contain a real bundle (`Contents/Info.plist`). Keep `.zip` (not `.7z`) for native unzip support.
 
 **Build with PyInstaller `--onefile`, never `--onedir`.** Onedir is faster to start (0.3 s vs 1.9 s measured on the owner's machine, 23.6 MB binary) but spreads the app over ~1,000 files in an `_internal/` folder, which forced a launcher script to exist purely to hide it. That launcher was the single biggest source of bugs in the project's history (see below). One file, ~2 s to start, no launcher: that trade is deliberate — do not reverse it to shave a second off a tool people run occasionally.
 
@@ -120,11 +120,11 @@ The CI matrix builds:
 - `EDOPro-HD-Sync-macOS-vVERSION.zip`
 - `EDOPro-HD-Sync-Linux-vVERSION.zip`
 
-Each bundle includes a platform-specific `ReadMe.txt`. The workflow also smoke-tests the packaged binary with `--health-check` before the release asset is published.
+Windows and Linux include a platform-specific `ReadMe.txt`. The workflow also smoke-tests the packaged binary with `--health-check` before the release asset is published.
 
-The macOS job uses an Intel runner. The resulting single macOS download runs
-natively on Intel and through Rosetta on Apple Silicon; keeping one binary
-avoids turning the Releases page into multiple architecture downloads.
+The macOS job uses universal2 Python to make one native Apple Silicon and
+Intel app. Set all Finder metadata before re-signing the app. Verify the
+signature and smoke-test both architectures after extracting the shipped ZIP.
 
 `fail-fast: false` is set so a failure on one platform does not cancel the others.
 

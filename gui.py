@@ -75,9 +75,15 @@ CHECKBOX_GROUPS = [
         "EXTRAS",
         [
             (
-                "textures",
-                "Curated textures",
+                "theme",
+                "Midnight Circuit theme",
                 "Custom backgrounds and card sleeves",
+                False,
+            ),
+            (
+                "audio",
+                "Synth music and cues",
+                "Adds two tracks and replaces ten duel cues",
                 False,
             ),
             (
@@ -537,11 +543,12 @@ class _App:
 
         buttons = ttk.Frame(f)
         buttons.grid(sticky="e", pady=(4, 0))
-        ttk.Button(
+        self.coverage_button = ttk.Button(
             buttons, text="Show coverage", style="Secondary.TButton", command=self._on_coverage
-        ).grid(row=0, column=0, padx=(0, 10))
+        )
+        self.coverage_button.grid(row=0, column=0, padx=(0, 10))
         self.start_button = ttk.Button(
-            buttons, text="Start", style="Primary.TButton", command=self._on_start
+            buttons, text="Install HD artwork", style="Primary.TButton", command=self._on_start
         )
         self.start_button.grid(row=0, column=1)
 
@@ -557,17 +564,18 @@ class _App:
         """Show the folder the sync will use, and gate Start on having one."""
         path = getattr(self.cfg, "edopro_path", "") or ""
         hint = ""
-        if config.folder_has_card_databases(path):
+        ready = config.folder_has_card_databases(path)
+        if ready:
             self.folder_var.set(_elide_path(path))
-            self.start_button.state(["!disabled"])
         elif config.looks_like_edopro_folder(path):
             self.folder_var.set(_elide_path(path))
             hint = "No card databases here yet — open EDOPro once, then run this again"
-            self.start_button.state(["!disabled"])
         else:
             self.folder_var.set("Not found")
             hint = "Press Change… and pick your ProjectIgnis folder"
-            self.start_button.state(["disabled"])
+        state = ["!disabled"] if ready else ["disabled"]
+        self.start_button.state(state)
+        self.coverage_button.state(state)
 
         self.folder_hint_var.set(hint)
         if hint:
@@ -763,10 +771,12 @@ class _App:
         self.root.after(80, self._pump)
 
     def _on_start(self) -> None:
-        self._launch(stats_only=False)
+        if not self.start_button.instate(["disabled"]):
+            self._launch(stats_only=False)
 
     def _on_coverage(self) -> None:
-        self._launch(stats_only=True)
+        if not self.coverage_button.instate(["disabled"]):
+            self._launch(stats_only=True)
 
     def _on_cancel(self) -> None:
         self.cancel_event.set()
@@ -925,7 +935,14 @@ class _App:
             self.hero_bad_var.set("")
             self.hero_bad_caption.configure(text="")
             self._breakdown_rows([])
-            self.summary_note_var.set("Nothing was missing — enjoy your duels!")
+            installed = getattr(self.cfg, "installed_extras", [])
+            if installed:
+                self.summary_title_var.set("Extras installed")
+                self.summary_note_var.set(
+                    f"Installed {', '.join(installed)}. Reopen EDOPro to use them."
+                )
+            else:
+                self.summary_note_var.set("Nothing was missing — enjoy your duels!")
         else:
             cancelled = self.cancel_event.is_set()
             self.summary_title_var.set("Sync cancelled" if cancelled else "Sync complete")
@@ -962,6 +979,9 @@ class _App:
                 rows.append(("Network errors (will retry)", f"{transient:,}"))
             self._breakdown_rows(rows)
             notes = []
+            installed = getattr(self.cfg, "installed_extras", [])
+            if installed:
+                notes.append(f"Installed {', '.join(installed)}. Reopen EDOPro to use them.")
             if unavailable:
                 notes.append(
                     "Unavailable cards are remembered for 14 days and skipped on the next run."
